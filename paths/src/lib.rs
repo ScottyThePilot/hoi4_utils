@@ -1,3 +1,5 @@
+extern crate dirs;
+
 use std::path::{Path, PathBuf};
 use std::fmt::{self, Display};
 use std::env::args;

@@ -8,10 +8,9 @@ Cargo.lock
 **/*.rs.bk
 
 # Other files
-mod_id
-definition.csv
-definition_*.csv
-error.log
-error.txt
-provinces.txt
-colors.txt
+/mod_id
+/definition.csv
+/definition_*.csv
+/error.*
+/provinces.*
+/colors.txt
