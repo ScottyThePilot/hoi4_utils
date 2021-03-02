@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "parse",
+  "paths",
+  "province_scraper",
+  "province_sniper",
+  "state_bouncer"
+]

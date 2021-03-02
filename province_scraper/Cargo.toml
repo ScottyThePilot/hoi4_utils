@@ -1,0 +1,9 @@
+[package]
+name = "province_scraper"
+version = "0.1.0"
+authors = ["ScottyThePilot <scotty.codes@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+image = "0.23"
+util_macros = { git = "https://github.com/ScottyThePilot/util_macros" }
