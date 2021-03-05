@@ -1,57 +1,73 @@
 #[macro_use] extern crate util_macros;
 extern crate parse;
 
-use parse::Def;
+use parse::{Def, Kind};
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::io;
-use std::fs;
+use std::{io, fs, fmt};
 
 fn main() {
-  if let Err(err) = run() {
-    println!("error: {:?}", err);
+  match run() {
+    Err(Error::Validation(errors)) => println!("error: validation failed\n{}", errors),
+    Err(err) => println!("error: {:?}", err),
+    _ => {}
   };
 }
 
 fn run() -> Result<(), Error> {
-  let collapse = arg("--collapse");
-  let (inverse, (provinces, location)) = match collapse {
-    true => (false, (Provinces::Collapse, "collapse")),
-    false => (arg("--inverse"), read_provinces()?)
+  let rule = Rule::open()?;
+  println!("definition rule: {}", rule);
+
+  let defs = read_definition()?;
+  println!("definitions read from definition.csv ({} provinces)", defs.len());
+
+  if arg("--validate") {
+    parse::validate_defs(&defs)?;
+    println!("no duplicate ids or colors");
+  } else {
+    println!("no validation performed");
   };
 
-  let definitions = read_definition()?;
-  let mut removed: usize = 0;
-  let mut new_defs = Vec::new();
-  for mut def in definitions {
-    if provinces.contains(&def) == inverse {
-      def.id = new_defs.len() as u32;
-      new_defs.push(def);
-    } else {
-      removed += 1;
-    };
-  };
+  let (defs, removed) = create_definitions(defs, |def| rule.apply(def));
+  println!("new definitions created, {} provinces removed", removed);
 
-  let new_def = new_defs
-    .into_iter()
-    .map(|e| e.to_string())
-    .collect::<String>();
-  println!("writing provinces to definition_new.csv");
-  fs::write("definition_new.csv", new_def)?;
-
-  match (collapse, inverse) {
-    (true, _) => println!("collapsed provinces"),
-    (false, false) => println!("removed all provinces defined in {} ({} provinces)", location, removed),
-    (false, true) => println!("removed all provinces except those defined in {} ({} provinces)", location, removed)
-  };
+  write_definition(&defs)?;
+  println!("new definitions written to definition_new.csv ({} provinces)", defs.len());
 
   Ok(())
 }
 
 #[inline]
 fn arg(find: &str) -> bool {
-  std::env::args().any(|a| a == find)
+  std::env::args().skip(1).any(|a| a == find)
+}
+
+fn create_definitions<F>(definitions: Vec<Def>, mut func: F) -> (Vec<Def>, usize)
+where F: FnMut(&mut Def) -> bool {
+  let mut removed = 0;
+  let mut new_definitions = Vec::new();
+  let keep_lakes = arg("--keep-lakes");
+  new_definitions.push(Def::initial());
+  for mut def in definitions {
+    if def.kind != Kind::Unknown {
+      if func(&mut def) || (def.kind != Kind::Lake && keep_lakes) {
+        def.id = new_definitions.len();
+        new_definitions.push(def);
+      } else {
+        removed += 1;
+      };
+    };
+  };
+
+  new_definitions.sort();
+  
+  (new_definitions, removed)
+}
+
+fn write_definition(defs: &[Def]) -> Result<(), Error> {
+  let defs = defs.iter().map(|e| e.to_string()).collect::<String>();
+  fs::write("definition_new.csv", defs).map_err(From::from)
 }
 
 fn read_definition() -> Result<Vec<Def>, Error> {
@@ -62,24 +78,6 @@ fn read_definition() -> Result<Vec<Def>, Error> {
     },
     Ok(None) => Err("could not find definition.csv".into()),
     Err(err) => Err(err.into())
-  }
-}
-
-fn read_provinces() -> Result<(Provinces, &'static str), Error> {
-  if let Some(data) = read_any(&["error.log", "error.txt"])? {
-    Provinces::parse_from_log(data)
-      .map(|provinces| (provinces, "error.log or error.txt"))
-      .ok_or("unable to parse error.txt".into())
-  } else if let Some(data) = read("provinces.txt")? {
-    Provinces::parse_from_list(data)
-      .map(|provinces| (provinces, "provinces.txt"))
-      .ok_or("unable to parse provinces.txt".into())
-  } else if let Some(data) = read("colors.txt")? {
-    Provinces::parse_from_colors(data)
-      .map(|provinces| (provinces, "colors.txt"))
-      .ok_or("unable to parse colors.txt".into())
-  } else {
-    Err("could not find error.log, error.txt, provinces.txt, or colors.txt".into())
   }
 }
 
@@ -100,57 +98,136 @@ fn read_any<P: AsRef<Path>, S: AsRef<[P]>>(paths: S) -> Result<Option<String>, i
   Ok(None)
 }
 
-enum Provinces {
-  Ids(BTreeSet<u32>),
-  Colors(BTreeSet<[u8; 3]>),
-  Collapse
+#[derive(Debug)]
+enum Rule {
+  Whitelist(Criteria),
+  Blacklist(Criteria),
+  Always
 }
 
-impl Provinces {
-  #[inline]
-  fn parse_from_log(data: String) -> Option<Provinces> {
-    parse::parse_log(data).map(From::from)
-  }
-
-  #[inline]
-  fn parse_from_list(data: String) -> Option<Provinces> {
-    parse::parse_list(data).map(From::from)
-  }
-
-  #[inline]
-  fn parse_from_colors(data: String) -> Option<Provinces> {
-    parse::parse_colors(data).map(From::from)
-  }
-}
-
-impl Provinces {
-  #[inline]
-  fn contains(&self, def: &Def) -> bool {
+impl Rule {
+  fn apply(&self, def: &Def) -> bool {
     match self {
-      Provinces::Ids(tree) => tree.contains(&def.id),
-      Provinces::Colors(tree) => tree.contains(&def.rgb),
-      Provinces::Collapse => true
+      Rule::Whitelist(criteria) => criteria.contains(def),
+      Rule::Blacklist(criteria) => !criteria.contains(def),
+      Rule::Always => true
+    }
+  }
+
+  fn open() -> Result<Rule, Error> {
+    if arg("--collapse") {
+      Ok(Rule::Always)
+    } else {
+      let criteria = Criteria::open()?;
+      if arg("--whitelist") {
+        // Remove all not included in the criteria
+        Ok(Rule::Whitelist(criteria))
+      } else {
+        // Remove all included in the criteria
+        Ok(Rule::Blacklist(criteria))
+      }
     }
   }
 }
 
-impl From<Vec<u32>> for Provinces {
-  #[inline]
-  fn from(value: Vec<u32>) -> Provinces {
-    Provinces::Ids(value.into_iter().collect())
+impl fmt::Display for Rule {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Rule::Whitelist(Criteria::Ids(_, loc)) => 
+        write!(f, "Rule(ONLY province ids IN {})", loc),
+      Rule::Whitelist(Criteria::Colors(_, loc)) => 
+        write!(f, "Rule(ONLY province colors IN {})", loc),
+      Rule::Blacklist(Criteria::Ids(_, loc)) =>
+        write!(f, "Rule(ONLY province ids NOT IN {})", loc),
+      Rule::Blacklist(Criteria::Colors(_, loc)) =>
+        write!(f, "Rule(ONLY province colors NOT IN {})", loc),
+      Rule::Always =>
+        write!(f, "Rule(ANY/COLLAPSE)")
+    }
   }
 }
 
-impl From<Vec<[u8; 3]>> for Provinces {
+#[derive(Debug)]
+enum Criteria {
+  Ids(BTreeSet<usize>, &'static str),
+  Colors(BTreeSet<[u8; 3]>, &'static str)
+}
+
+impl Criteria {
+  fn open() -> Result<Criteria, Error> {
+    if let Some(data) = read_any(&["error.log", "error.txt"])? {
+      Criteria::parse_from_log(data, "error.log or error.txt")
+        .ok_or("unable to parse error.txt".into())
+    } else if let Some(data) = read("provinces.txt")? {
+      Criteria::parse_from_list(data, "provinces.txt")
+        .ok_or("unable to parse provinces.txt".into())
+    } else if let Some(data) = read("colors.txt")? {
+      Criteria::parse_from_colors(data, "colors.txt")
+        .ok_or("unable to parse colors.txt".into())
+    } else {
+      Err("could not find error.log, error.txt, provinces.txt, or colors.txt".into())
+    }
+  }
+
   #[inline]
-  fn from(value: Vec<[u8; 3]>) -> Provinces {
-    Provinces::Colors(value.into_iter().collect())
+  fn parse_from_log(data: String, location: &'static str) -> Option<Criteria> {
+    parse::parse_log(data).map(|data| {
+      let data = data.into_iter()
+        .collect::<BTreeSet<_>>();
+      Criteria::Ids(data, location)
+    })
+  }
+
+  #[inline]
+  fn parse_from_list(data: String, location: &'static str) -> Option<Criteria> {
+    parse::parse_list(data).map(|data| {
+      let data = data.into_iter()
+        .collect::<BTreeSet<_>>();
+      Criteria::Ids(data, location)
+    })
+  }
+
+  #[inline]
+  fn parse_from_colors(data: String, location: &'static str) -> Option<Criteria> {
+    parse::parse_colors(data).map(|data| {
+      let data = data.into_iter()
+        .collect::<BTreeSet<_>>();
+      Criteria::Colors(data, location)
+    })
+  }
+}
+
+impl Criteria {
+  #[inline]
+  fn contains(&self, def: &Def) -> bool {
+    match self {
+      Criteria::Ids(tree, _) => tree.contains(&def.id),
+      Criteria::Colors(tree, _) => tree.contains(&def.rgb)
+    }
   }
 }
 
 error_enum!{
   enum Error {
     Io(io::Error),
+    Validation(Validation),
     Custom(&'static str)
+  }
+}
+
+impl From<Vec<String>> for Error {
+  fn from(inner: Vec<String>) -> Error {
+    Error::Validation(Validation { inner })
+  }
+}
+
+#[derive(Debug)]
+struct Validation {
+  inner: Vec<String>
+}
+
+impl fmt::Display for Validation {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{}", self.inner.join("\n"))
   }
 }
