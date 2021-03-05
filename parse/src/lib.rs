@@ -17,7 +17,7 @@ lazy_static!{
 pub enum Kind {
   Unknown = 0,
   Land = 1,
-  Ocean = 2,
+  Sea = 2,
   Lake = 3
 }
 
@@ -27,7 +27,7 @@ impl Kind {
     match self {
       Kind::Unknown => "unknown",
       Kind::Land => "land",
-      Kind::Ocean => "ocean",
+      Kind::Sea => "sea",
       Kind::Lake => "lake"
     }
   }
@@ -45,7 +45,7 @@ impl FromStr for Kind {
     match s {
       "unknown" => Ok(Kind::Unknown),
       "land" => Ok(Kind::Land),
-      "ocean" => Ok(Kind::Ocean),
+      "sea" => Ok(Kind::Sea),
       "lake" => Ok(Kind::Lake),
       _ => Err(())
     }
@@ -132,7 +132,13 @@ impl FromStr for Def {
 pub fn parse_csv(content: impl AsRef<str>) -> Option<Vec<Def>> {
   let content = content.as_ref().trim();
   content.split_whitespace()
-    .map(parse_csv_line)
+    .map(|line| match parse_csv_line(line) {
+      Some(d) => Some(d),
+      None => {
+        println!("{}", line);
+        None
+      }
+    })
     .collect()
 }
 
