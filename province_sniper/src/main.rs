@@ -22,15 +22,12 @@ fn run() -> Result<(), Error> {
   let defs = read_definition()?;
   println!("definitions read from definition.csv ({} provinces)", defs.len());
 
-  if arg("--validate") {
-    parse::validate_defs(&defs)?;
-    println!("no duplicate ids or colors");
-  } else {
-    println!("no validation performed");
-  };
+  conditional_validation(&defs, arg("--validate"))?;
 
   let (defs, removed) = create_definitions(defs, |def| rule.apply(def));
   println!("new definitions created, {} provinces removed", removed);
+
+  conditional_validation(&defs, arg("--post-validate"))?;
 
   write_definition(&defs)?;
   println!("new definitions written to definition_new.csv ({} provinces)", defs.len());
@@ -43,6 +40,26 @@ fn arg(find: &str) -> bool {
   std::env::args().skip(1).any(|a| a == find)
 }
 
+fn conditional_validation(definitions: &[Def], condition: bool) -> Result<(), Error> {
+  if condition {
+    if let Err((dump, errors)) = parse::validate_defs(&definitions, arg("--dump-validate")) {
+      if let Some((dump_colors_conflicting, dump_colors)) = dump {
+        fs::write("dump_colors_conflicting.txt", dump_colors_conflicting)?;
+        fs::write("dump_colors.txt", dump_colors)?;
+        println!("check dump_colors_conflicting.txt and dump_colors.txt for color data");
+      };
+
+      return Err(errors.into());
+    };
+
+    println!("no duplicate ids or colors");
+  } else {
+    println!("no validation performed");
+  };
+
+  Ok(())
+}
+
 fn create_definitions<F>(definitions: Vec<Def>, mut func: F) -> (Vec<Def>, usize)
 where F: FnMut(&mut Def) -> bool {
   let mut removed = 0;
@@ -52,7 +69,7 @@ where F: FnMut(&mut Def) -> bool {
   for mut def in definitions {
     if def.kind != Kind::Unknown {
       if func(&mut def) || (def.kind != Kind::Lake && keep_lakes) {
-        def.id = new_definitions.len();
+        //def.id = new_definitions.len();
         new_definitions.push(def);
       } else {
         removed += 1;
@@ -61,6 +78,10 @@ where F: FnMut(&mut Def) -> bool {
   };
 
   new_definitions.sort();
+
+  for (i, def) in new_definitions.iter_mut().enumerate() {
+    def.id = i;
+  };
   
   (new_definitions, removed)
 }
