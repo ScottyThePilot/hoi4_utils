@@ -10,7 +10,7 @@ lazy_static!{
   static ref RX_COLOR: Regex = Regex::new(r"\[(\d+),(\d+),(\d+)\]").unwrap();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Kind {
   Unknown = 0,
   Land = 1,
@@ -55,7 +55,7 @@ impl fmt::Display for Kind {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Def {
   pub id: usize,
   pub rgb: [u8; 3],

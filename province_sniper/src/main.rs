@@ -1,7 +1,7 @@
 #[macro_use] extern crate util_macros;
 extern crate parse;
 
-use parse::{Def, Kind};
+use parse::{Def, Kind, ValidateError};
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -42,16 +42,7 @@ fn arg(find: &str) -> bool {
 
 fn conditional_validation(definitions: &[Def], condition: bool) -> Result<(), Error> {
   if condition {
-    if let Err((dump, errors)) = parse::validate_defs(&definitions, arg("--dump-validate")) {
-      if let Some((dump_colors_conflicting, dump_colors)) = dump {
-        fs::write("dump_colors_conflicting.txt", dump_colors_conflicting)?;
-        fs::write("dump_colors.txt", dump_colors)?;
-        println!("check dump_colors_conflicting.txt and dump_colors.txt for color data");
-      };
-
-      return Err(errors.into());
-    };
-
+    parse::validate_defs(&definitions, arg("--dump-validate"))?;
     println!("no duplicate ids or colors");
   } else {
     println!("no validation performed");
@@ -231,24 +222,7 @@ impl Criteria {
 error_enum!{
   enum Error {
     Io(io::Error),
-    Validation(Validation),
+    Validation(ValidateError),
     Custom(&'static str)
-  }
-}
-
-impl From<Vec<String>> for Error {
-  fn from(inner: Vec<String>) -> Error {
-    Error::Validation(Validation { inner })
-  }
-}
-
-#[derive(Debug)]
-struct Validation {
-  inner: Vec<String>
-}
-
-impl fmt::Display for Validation {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.inner.join("\n"))
   }
 }
