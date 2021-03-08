@@ -11,6 +11,6 @@ Cargo.lock
 /mod_id
 /definition*.csv
 /error.*
-/provinces.*
+/provinces*.*
 /colors.txt
 /dump_colors*.txt

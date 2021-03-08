@@ -4,5 +4,6 @@ members = [
   "paths",
   "province_scraper",
   "province_sniper",
+  "province_welder",
   "state_bouncer"
 ]
